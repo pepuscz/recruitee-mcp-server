@@ -171,7 +171,7 @@ def get_client() -> RecruiteeClient:
     return recruitee_client
 
 @mcp.tool()
-async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter: Optional[str] = None) -> Dict[str, Any]:
+async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter: Optional[str] = None, include_full_cv: bool = True) -> Dict[str, Any]:
     """
     Get candidates from a job pipeline with evaluation-relevant data for LLM analysis.
     Includes CV text transcription, cover letters, screening questions, and meaningful extracted data.
@@ -179,9 +179,12 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
     Args:
         job_id: The job/pipeline ID (required)
         stage_filter: Optional stage name filter
+        include_full_cv: Whether to include full CV text extraction (default: True). 
+                        Set to False to avoid overwhelming LLM models - basic CV metadata still included.
+                        Use get_candidate_profile(candidate_id) to get full CV text when needed.
     
     Returns:
-        Evaluation-focused candidate data including CV text, screening answers, skills/experience,
+        Evaluation-focused candidate data including CV text (if requested), screening answers, skills/experience,
         cover letters - optimized for candidate evaluation without administrative noise.
     """
     client = get_client()
@@ -210,10 +213,17 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
                 if not stage_match:
                     continue
             
-            # Fetch full profile for evaluation data extraction
+            # Fetch profile for evaluation data extraction
             try:
                 candidate_id = candidate.get("id")
-                full_profile = await get_candidate_profile(str(candidate_id))
+                if include_full_cv:
+                    # Get full profile including CV text extraction
+                    full_profile = await get_candidate_profile(str(candidate_id))
+                else:
+                    # Get basic profile without CV processing for performance
+                    client = get_client()
+                    candidate_data = await client.get(f"/candidates/{candidate_id}")
+                    full_profile = candidate_data.get("candidate", {})
                 
                 # Extract and clean screening questions
                 screening_questions = []
@@ -385,10 +395,11 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
                     "stage_position": stage_position,
                     
                     # CV DATA (MOST IMPORTANT)
-                    "cv_text": full_profile.get("cv_full_text_extraction", {}).get("full_text", ""),
+                    "cv_text": full_profile.get("cv_full_text_extraction", {}).get("full_text", "") if include_full_cv else "",
                     "cv_available": bool(full_profile.get("cv_url")),
-                    "cv_pages": full_profile.get("cv_text_summary", {}).get("page_count", 0),
-                    "cv_word_count": full_profile.get("cv_text_summary", {}).get("word_count", 0),
+                    "cv_pages": full_profile.get("cv_text_summary", {}).get("page_count", 0) if include_full_cv else 0,
+                    "cv_word_count": full_profile.get("cv_text_summary", {}).get("word_count", 0) if include_full_cv else 0,
+                    "cv_processing_skipped": not include_full_cv,
                     
                     # COVER LETTER
                     "cover_letter": full_profile.get("cover_letter", "") or full_profile.get("cover_letter_pdf_extraction", {}).get("full_text", ""),
@@ -429,18 +440,20 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
         result = {
             "job_id": job_id,
             "stage_filter": stage_filter,
+            "include_full_cv": include_full_cv,
             "total_candidates": len(evaluation_candidates),
             "data_optimized_for": "LLM_evaluation",
             "candidates": evaluation_candidates,
             "evaluation_guide": {
                 "key_fields": [
-                    "cv_text - Full CV content for skills/experience analysis", 
+                    "cv_text - Full CV content for skills/experience analysis" + ("" if include_full_cv else " (SKIPPED - set include_full_cv=True or use get_candidate_profile() for full text)"), 
                     "screening_questions - Candidate responses to specific job questions",
                     "skills - Extracted technical and soft skills",
                     "experience - Work history with descriptions",
                     "cover_letter - Candidate motivation and fit assessment"
                 ],
-                "screening_questions_note": "Each question contains 'question', 'answer', and 'question_type' fields for easy evaluation"
+                "screening_questions_note": "Each question contains 'question', 'answer', and 'question_type' fields for easy evaluation",
+                "cv_processing_note": "CV text extraction was " + ("included" if include_full_cv else "skipped to avoid overwhelming LLM models. Use get_candidate_profile(candidate_id) for full CV text.")
             }
         }
         

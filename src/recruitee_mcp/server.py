@@ -175,12 +175,17 @@ async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool 
     """
     Extract all candidates from a specific job pipeline with high-level information.
     Returns minimal candidate data by default to avoid overwhelming LLM context.
+    Includes screening questions completion status for each candidate.
     Use get_candidate_profile() to get detailed information for specific candidates.
     
     Args:
         job_id: The job/pipeline ID (required)
         include_full_profiles: Fetch complete profiles (default: false - returns only high-level info)
         stage_filter: Optional stage name filter
+    
+    Returns:
+        High-level candidate info including: id, name, status, dates, source, 
+        screening questions completion, and placement details for the specific job.
     """
     client = get_client()
     
@@ -219,18 +224,27 @@ async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool 
                     logger.warning(f"Failed to get full profile for candidate {candidate.get('id')}: {e}")
                     pipeline_candidates.append(candidate)
             else:
+                # Check screening questions/fields
+                fields = candidate.get("fields", [])
+                screening_summary = {
+                    "total_questions": len(fields),
+                    "answered_questions": len([f for f in fields if f.get("value") not in [None, "", []]]),
+                    "completion_percentage": 0
+                }
+                if screening_summary["total_questions"] > 0:
+                    screening_summary["completion_percentage"] = round(
+                        (screening_summary["answered_questions"] / screening_summary["total_questions"]) * 100, 1
+                    )
+                
                 # Return only high-level candidate information
                 high_level_candidate = {
                     "id": candidate.get("id"),
                     "name": candidate.get("name"),
-                    "email": candidate.get("email"),
-                    "phone": candidate.get("phone"),
                     "status": candidate.get("status"),
                     "created_at": candidate.get("created_at"),
                     "updated_at": candidate.get("updated_at"),
                     "source": candidate.get("source"),
-                    "has_cv": bool(candidate.get("cv_url")),
-                    "has_cover_letter": bool(candidate.get("cover_letter")),
+                    "screening_questions": screening_summary,
                     "placements": []
                 }
                 

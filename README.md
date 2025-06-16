@@ -5,6 +5,7 @@ A Model Context Protocol (MCP) server for the Recruitee API that enables extract
 ## Features
 
 - **LLM-Context Optimized**: `get_candidates_from_pipeline` returns high-level candidate info by default to avoid overwhelming LLM context
+- **Screening Questions Analysis**: Shows completion status of candidate screening questions/forms
 - **Complete Candidate Profiles**: Use `get_candidate_profile()` to get detailed information for specific candidates
 - **PDF Text Extraction**: Automatic CV and cover letter text extraction using pdfplumber
 - **Server-side Filtering**: Efficient candidate filtering by job/pipeline
@@ -26,7 +27,7 @@ A Model Context Protocol (MCP) server for the Recruitee API that enables extract
 
 #### `get_candidates_from_pipeline(job_id, include_full_profiles=False, stage_filter=None)`
 **Optimized for LLM Context**: Returns only essential candidate information by default.
-- **High-level mode** (default): Returns id, name, email, phone, status, CV/cover letter flags, placement stage
+- **High-level mode** (default): Returns id, name, status, source, screening questions completion, placement stage
 - **Full profile mode**: Set `include_full_profiles=True` for complete data (use sparingly)
 - **Stage filtering**: Optional filter by recruitment stage
 

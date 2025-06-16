@@ -171,13 +171,15 @@ def get_client() -> RecruiteeClient:
     return recruitee_client
 
 @mcp.tool()
-async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool = True, stage_filter: Optional[str] = None) -> Dict[str, Any]:
+async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool = False, stage_filter: Optional[str] = None) -> Dict[str, Any]:
     """
-    Extract all candidates from a specific job pipeline with full profiles.
+    Extract all candidates from a specific job pipeline with high-level information.
+    Returns minimal candidate data by default to avoid overwhelming LLM context.
+    Use get_candidate_profile() to get detailed information for specific candidates.
     
     Args:
         job_id: The job/pipeline ID (required)
-        include_full_profiles: Fetch complete profiles (default: true)  
+        include_full_profiles: Fetch complete profiles (default: false - returns only high-level info)
         stage_filter: Optional stage name filter
     """
     client = get_client()
@@ -208,7 +210,7 @@ async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool 
                     continue
             
             if include_full_profiles:
-                # Fetch full candidate profile
+                # Fetch full candidate profile (expensive operation)
                 try:
                     candidate_id = candidate.get("id")
                     full_profile = await get_candidate_profile(str(candidate_id))
@@ -217,16 +219,47 @@ async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool 
                     logger.warning(f"Failed to get full profile for candidate {candidate.get('id')}: {e}")
                     pipeline_candidates.append(candidate)
             else:
-                pipeline_candidates.append(candidate)
+                # Return only high-level candidate information
+                high_level_candidate = {
+                    "id": candidate.get("id"),
+                    "name": candidate.get("name"),
+                    "email": candidate.get("email"),
+                    "phone": candidate.get("phone"),
+                    "status": candidate.get("status"),
+                    "created_at": candidate.get("created_at"),
+                    "updated_at": candidate.get("updated_at"),
+                    "source": candidate.get("source"),
+                    "has_cv": bool(candidate.get("cv_url")),
+                    "has_cover_letter": bool(candidate.get("cover_letter")),
+                    "placements": []
+                }
+                
+                # Add placement info for this specific job
+                for placement in candidate.get("placements", []):
+                    if str(placement.get("offer_id")) == str(job_id):
+                        stage_info = placement.get("stage", {})
+                        high_level_candidate["placements"].append({
+                            "offer_id": placement.get("offer_id"),
+                            "stage": {
+                                "id": stage_info.get("id") if isinstance(stage_info, dict) else None,
+                                "name": stage_info.get("name") if isinstance(stage_info, dict) else stage_info
+                            },
+                            "rating": placement.get("rating"),
+                            "created_at": placement.get("created_at")
+                        })
+                
+                pipeline_candidates.append(high_level_candidate)
         
         result = {
             "job_id": job_id,
             "stage_filter": stage_filter,
+            "include_full_profiles": include_full_profiles,
             "total_candidates": len(pipeline_candidates),
-            "candidates": pipeline_candidates
+            "candidates": pipeline_candidates,
+            "note": "Use get_candidate_profile(candidate_id) to get detailed information for specific candidates" if not include_full_profiles else None
         }
         
-        logger.info(f"Returning {len(pipeline_candidates)} candidates for job {job_id}")
+        logger.info(f"Returning {len(pipeline_candidates)} candidates for job {job_id} (full_profiles={include_full_profiles})")
         
         return result
         
@@ -441,27 +474,6 @@ async def get_candidate_profile(candidate_id: str) -> Dict[str, Any]:
         raise Exception(f"Failed to get candidate profile: {str(e)}")
 
 @mcp.tool()
-async def extract_cv_text(pdf_url: str) -> Dict[str, Any]:
-    """
-    Extract full text content from any PDF URL (useful for CVs, cover letters, or other documents).
-    
-    Args:
-        pdf_url: Direct URL to the PDF file to extract text from
-    """
-    try:
-        logger.info(f"Extracting text from PDF: {pdf_url}")
-        result = await extract_pdf_text(pdf_url)
-        
-        return {
-            "pdf_url": pdf_url,
-            "extraction_result": result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error extracting CV text: {e}")
-        raise Exception(f"Failed to extract CV text: {str(e)}")
-
-@mcp.tool()
 async def list_jobs() -> Dict[str, Any]:
     """List all available jobs/pipelines."""
     client = get_client()
@@ -530,29 +542,6 @@ async def get_candidate_notes(candidate_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting candidate notes: {e}")
         raise Exception(f"Failed to get candidate notes: {str(e)}")
-
-@mcp.tool()
-async def get_candidates_basic(limit: int = 100) -> Dict[str, Any]:
-    """
-    Get basic candidate list using the reliable endpoint.
-    
-    Args:
-        limit: Number of candidates to return
-    """
-    client = get_client()
-    
-    try:
-        candidates_data = await client.get("/candidates", params={"limit": limit})
-        candidates = candidates_data.get("candidates", [])
-        
-        return {
-            "total_returned": len(candidates),
-            "candidates": candidates
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting basic candidates: {e}")
-        raise Exception(f"Failed to get candidates: {str(e)}")
 
 async def cleanup():
     """Cleanup resources"""

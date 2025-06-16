@@ -1,42 +1,108 @@
 # Recruitee MCP Server
 
-A comprehensive Model Context Protocol (MCP) server for the Recruitee API that enables extraction of candidate profiles from recruitment pipelines. Features advanced PDF text extraction capabilities combined with Recruitee's AI-parsed structured data for complete candidate analysis.
+A Model Context Protocol (MCP) server for the Recruitee API that enables extraction of candidate profiles from recruitment pipelines. Optimized for LLM context efficiency with a streamlined set of tools.
 
-## ✨ Features
+## Features
 
-- **🔍 Comprehensive Candidate Extraction**: Access complete candidate data including contact details, CVs, cover letters, screening questions, experience, and custom fields
-- **📄 Advanced PDF Text Extraction**: Extract full text content from CV and cover letter PDFs using pdfplumber
-- **🏢 Pipeline-Based Filtering**: Extract candidates from specific job pipelines with server-side optimization
-- **🎯 Intelligent Filtering**: Robust client-side filtering to work around API limitations
-- **🤖 Dual Data Sources**: Combines Recruitee's AI-parsed structured data with complete PDF text extraction
-- **🔒 Read-Only Operations**: Safe data extraction without modification capabilities
-- **📊 Analytics Ready**: Built-in candidate analytics and pipeline statistics
+- **LLM-Context Optimized**: `get_candidates_from_pipeline` returns high-level candidate info by default to avoid overwhelming LLM context
+- **Complete Candidate Profiles**: Use `get_candidate_profile()` to get detailed information for specific candidates
+- **PDF Text Extraction**: Automatic CV and cover letter text extraction using pdfplumber
+- **Server-side Filtering**: Efficient candidate filtering by job/pipeline
+- **Comprehensive Search**: Advanced candidate search with multiple filter criteria
+- **Notes Access**: Separate access to candidate notes and comments
 
-## 🛠 Installation
+## Available Tools
+
+### Core Tools
+
+1. **`get_candidates_from_pipeline`** - Get high-level candidate list from a job pipeline
+2. **`get_candidate_profile`** - Get complete detailed profile for a specific candidate
+3. **`search_candidates`** - Search and filter candidates with various criteria
+4. **`list_jobs`** - List all available jobs/pipelines
+5. **`get_job_details`** - Get detailed information about a specific job
+6. **`get_candidate_notes`** - Access notes and comments for a candidate
+
+### Tool Details
+
+#### `get_candidates_from_pipeline(job_id, include_full_profiles=False, stage_filter=None)`
+**Optimized for LLM Context**: Returns only essential candidate information by default.
+- **High-level mode** (default): Returns id, name, email, phone, status, CV/cover letter flags, placement stage
+- **Full profile mode**: Set `include_full_profiles=True` for complete data (use sparingly)
+- **Stage filtering**: Optional filter by recruitment stage
+
+#### `get_candidate_profile(candidate_id)`
+Get complete candidate details including:
+- Contact information and basic profile data
+- CV text extraction (full PDF text using pdfplumber)
+- Cover letter content (both API text and PDF extraction)
+- Custom fields and screening questions
+- Placement history and ratings
+- Source and referral information
+
+#### `search_candidates(job_ids, stage_names, status, has_cv, has_cover_letter, limit, offset)`
+Advanced search with client-side filtering:
+- Filter by specific job IDs
+- Filter by recruitment stages
+- Filter by candidate status
+- Filter by CV/cover letter presence
+- Pagination support
+
+## Installation
 
 ```bash
-git clone https://github.com/pepuscz/recruitee-mcp-server.git
+# Clone the repository
+git clone <repository-url>
 cd recruitee-mcp-server
 
-# Setup virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
 # Install dependencies
-pip install -r requirements.txt
 pip install -e .
 ```
 
-## ⚙️ Configuration
+## Configuration
 
-### Get Recruitee API Credentials
+Set environment variables:
 
-1. Log in to Recruitee → **Settings** → **Apps and plugins** → **Personal API tokens**
-2. Create new token and note your **Company ID** (found in Company Settings)
+```bash
+export RECRUITEE_API_TOKEN="your-api-token"
+export RECRUITEE_COMPANY_ID="your-company-id"
+```
 
-### Cursor/Claude Desktop Setup
+## Usage
 
-Create your MCP configuration file with the following structure:
+### Basic Workflow (Recommended)
+
+1. **Get high-level candidate overview:**
+```python
+# Returns essential info for all candidates (LLM-friendly)
+candidates = get_candidates_from_pipeline("job_id")
+```
+
+2. **Get detailed profile for specific candidates:**
+```python
+# Get complete profile including CV text extraction
+profile = get_candidate_profile("candidate_id")
+```
+
+### Advanced Usage
+
+**Search candidates:**
+```python
+results = search_candidates(
+    job_ids=["123", "456"],
+    stage_names=["Interview", "Assessment"],
+    has_cv=True,
+    limit=20
+)
+```
+
+**Get candidate notes:**
+```python
+notes = get_candidate_notes("candidate_id")
+```
+
+## MCP Integration
+
+Add to your MCP settings:
 
 ```json
 {
@@ -45,166 +111,23 @@ Create your MCP configuration file with the following structure:
       "command": "python",
       "args": ["-m", "recruitee_mcp.server"],
       "env": {
-        "RECRUITEE_API_TOKEN": "your_api_token_here",
-        "RECRUITEE_COMPANY_ID": "your_company_id_here"
+        "RECRUITEE_API_TOKEN": "your-token",
+        "RECRUITEE_COMPANY_ID": "your-company-id"
       }
     }
   }
 }
 ```
 
-**For Cursor**: Add this to Cursor Settings → MCP Servers
-**For Claude Desktop**: Add this to your Claude Desktop configuration
+## Performance Optimization
 
-## 🚀 Available Tools
+- **High-level mode**: Use default settings for `get_candidates_from_pipeline` to get lightweight candidate lists
+- **Selective profiling**: Only call `get_candidate_profile()` for candidates you're specifically interested in
+- **Efficient filtering**: Use `search_candidates()` for complex queries instead of fetching all candidates
 
-### `get_candidates_from_pipeline`
-Extract all candidates from a specific job pipeline with complete profiles.
-- `job_id`: The job/pipeline ID (required)
-- `include_full_profiles`: Fetch complete profiles with PDF extraction (default: true)
-- `stage_filter`: Optional stage name filter
+## License
 
-### `get_candidate_profile`  
-Get comprehensive candidate details including full PDF text extraction.
-- `candidate_id`: The candidate ID (required)
-
-Returns complete profile with:
-- Basic contact information
-- **Full CV text** extracted from PDF
-- **Cover letter content** from both API and PDF sources
-- Screening question responses
-- AI-parsed skills, experience, education
-- Document URLs and metadata
-
-### `search_candidates`
-Search candidates with advanced client-side filtering.
-- `job_ids`: Filter by specific job IDs
-- `stage_names`: Filter by recruitment stages  
-- `status`: Filter by status (Qualified, Disqualified, New)
-- `has_cv`: Filter candidates with/without CV
-- `has_cover_letter`: Filter candidates with/without cover letter
-- `limit`/`offset`: Pagination controls
-
-### `list_jobs`
-List all available jobs/pipelines in your Recruitee account.
-
-### `get_job_details`
-Get detailed information about a specific job/pipeline.
-- `job_id`: The job ID (required)
-
-### `get_candidate_notes`
-Get notes and comments for a candidate.
-- `candidate_id`: The candidate ID (required)
-
-### `get_candidates_basic`
-Get basic candidate list for quick overview.
-- `limit`: Number of candidates to return (default: 100)
-
-### `extract_cv_text`
-Extract full text from any PDF URL (utility function).
-- `pdf_url`: Direct URL to PDF file
-
-## 📊 Extracted Data
-
-The server provides comprehensive candidate information combining multiple data sources:
-
-### **Contact & Basic Info**
-- Email addresses, phone numbers
-- Address and location data
-- Social media profiles and links
-- Application status and stage information
-
-### **Document Analysis**
-- **CV/Resume**: Full text extraction + AI-parsed structure
-- **Cover Letters**: Both API text and PDF extraction
-- **Portfolio**: Additional document access
-
-### **Screening & Assessment**
-- Application form responses
-- Screening question answers
-- Custom field values
-- Evaluation scores and notes
-
-### **Professional Profile**
-- **AI-Parsed Data**: Skills, experience, education, languages
-- **Full Text Content**: Complete CV and cover letter text
-- **Structured Fields**: All custom profile fields
-- **Timeline Data**: Application history and stage progression
-
-## 🔧 Technical Implementation
-
-### Server-Side Optimization
-Uses Recruitee's `/candidates?offer_id=` endpoint for efficient pipeline filtering, avoiding unreliable search endpoints.
-
-### Dual PDF Extraction
-1. **Recruitee AI Parsing**: Structured skills, experience, education data
-2. **Full Text Extraction**: Complete PDF content using pdfplumber for comprehensive analysis
-
-### Client-Side Filtering
-Implements robust filtering as a workaround for API limitations:
-- Fetches data using reliable endpoints
-- Applies complex filters client-side
-- Maintains consistent tool interface
-
-## 💡 Usage Examples
-
-```json
-// Get all candidates from a specific job pipeline
-{
-  "tool": "get_candidates_from_pipeline", 
-  "arguments": {"job_id": "12345", "include_full_profiles": true}
-}
-
-// Search candidates with CV in specific stage
-{
-  "tool": "search_candidates",
-  "arguments": {
-    "job_ids": ["12345"],
-    "stage_names": ["Final Interview"],
-    "has_cv": true
-  }
-}
-
-// Get complete candidate profile with PDF extraction
-{
-  "tool": "get_candidate_profile",
-  "arguments": {"candidate_id": "67890"}
-}
-
-// Extract text from any PDF document
-{
-  "tool": "extract_cv_text",
-  "arguments": {"pdf_url": "https://example.com/cv.pdf"}
-}
-```
-
-## 📈 Pipeline Analytics
-
-The server automatically provides analytics for job pipelines:
-- Candidate source breakdown
-- Referrer analysis  
-- Document coverage statistics
-- Stage distribution
-- Application timeline data
-
-## 🔒 Security & Privacy
-
-- **Read-only access**: No data modification capabilities
-- **Environment variables**: Secure credential management
-- **No data storage**: Processes data without persistence
-- **API compliance**: Follows Recruitee API best practices
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📝 License
-
-MIT License - see LICENSE file for details
+MIT License
 
 ## 🔗 Links
 

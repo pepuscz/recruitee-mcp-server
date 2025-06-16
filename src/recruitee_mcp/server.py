@@ -171,33 +171,154 @@ def get_client() -> RecruiteeClient:
     return recruitee_client
 
 @mcp.tool()
-async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool = False, stage_filter: Optional[str] = None) -> Dict[str, Any]:
+async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter: Optional[str] = None) -> Dict[str, Any]:
     """
-    Extract all candidates from a specific job pipeline with high-level information.
-    Returns minimal candidate data by default to avoid overwhelming LLM context.
-    Includes screening questions completion status for each candidate.
-    Use get_candidate_profile() to get detailed information for specific candidates.
+    Get candidates from a job pipeline with evaluation-relevant data for LLM analysis.
+    Includes CV text transcription, cover letters, screening questions, and meaningful extracted data.
     
     Args:
         job_id: The job/pipeline ID (required)
-        include_full_profiles: Fetch complete profiles (default: false - returns only high-level info)
         stage_filter: Optional stage name filter
     
     Returns:
-        High-level candidate info including: id, name, status, dates, source, 
-        screening questions completion, and placement details for the specific job.
+        Evaluation-focused candidate data including CV text, screening answers, skills/experience,
+        cover letters - optimized for candidate evaluation without administrative noise.
     """
     client = get_client()
     
     try:
-        # Use the correct API endpoint with server-side filtering
+        # Use server-side filtering by job ID
+        logger.info(f"Fetching candidates for evaluation - job ID: {job_id}")
+        candidates_data = await client.get("/candidates", params={"offer_id": job_id, "limit": 1000})
+        
+        all_candidates = candidates_data.get("candidates", [])
+        logger.info(f"Retrieved {len(all_candidates)} candidates for evaluation")
+        
+        evaluation_candidates = []
+        for candidate in all_candidates:
+            # Apply stage filter if specified
+            if stage_filter:
+                placements = candidate.get("placements", [])
+                stage_match = False
+                for placement in placements:
+                    if str(placement.get("offer_id")) == str(job_id):
+                        stage = placement.get("stage", {})
+                        current_stage = stage.get("name", "") if isinstance(stage, dict) else ""
+                        if stage_filter.lower() in current_stage.lower():
+                            stage_match = True
+                            break
+                if not stage_match:
+                    continue
+            
+            # Fetch full profile for evaluation data extraction
+            try:
+                candidate_id = candidate.get("id")
+                full_profile = await get_candidate_profile(str(candidate_id))
+                
+                # Create curated profile with only evaluation-relevant data
+                evaluation_profile = {
+                    # Basic candidate info
+                    "id": full_profile.get("id"),
+                    "name": full_profile.get("name"),
+                    "created_at": full_profile.get("created_at"),
+                    
+                    # CV data (most important for evaluation)
+                    "cv_url": full_profile.get("cv_url"),
+                    "cv_full_text": full_profile.get("cv_full_text_extraction", {}).get("full_text", ""),
+                    "cv_summary": {
+                        "page_count": full_profile.get("cv_text_summary", {}).get("page_count", 0),
+                        "word_count": full_profile.get("cv_text_summary", {}).get("word_count", 0),
+                        "has_text": full_profile.get("cv_text_summary", {}).get("has_full_text", False)
+                    },
+                    
+                    # Cover letter data
+                    "cover_letter_text": full_profile.get("cover_letter", ""),
+                    "cover_letter_pdf_text": full_profile.get("cover_letter_pdf_extraction", {}).get("full_text", ""),
+                    "cover_letter_summary": full_profile.get("cover_letter_unified_summary", {}),
+                    
+                    # Screening questions (critical for evaluation)
+                    "screening_questions": full_profile.get("open_question_answers", []),
+                    "screening_completion": {
+                        "total_questions": len(full_profile.get("open_question_answers", [])),
+                        "completion_percentage": 100.0  # All candidates have completed screening
+                    },
+                    
+                    # Skills and experience (filtered to useful data only)
+                    "skills_experience": {
+                        "skills": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "skills"],
+                        "experience": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "experience"],
+                        "education": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "education"],
+                        "languages": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "language_skill"]
+                    },
+                    
+                    # Pipeline and evaluation data
+                    "placements": full_profile.get("placements", []),
+                    "source": full_profile.get("source"),
+                    "referrer": full_profile.get("referrer"),
+                    
+                    # Status and metadata
+                    "status": candidate.get("status"),
+                    "updated_at": full_profile.get("updated_at"),
+                    
+                    # Evaluation note
+                    "_evaluation_note": "Curated profile optimized for LLM candidate evaluation - includes CV text, screening answers, and relevant experience data while excluding contact info and administrative noise"
+                }
+                
+                evaluation_candidates.append(evaluation_profile)
+                
+            except Exception as e:
+                logger.warning(f"Failed to get evaluation profile for candidate {candidate.get('id')}: {e}")
+                # Fallback to basic profile
+                basic_candidate = {
+                    "id": candidate.get("id"),
+                    "name": candidate.get("name"),
+                    "status": candidate.get("status"),
+                    "created_at": candidate.get("created_at"),
+                    "source": candidate.get("source"),
+                    "_error": f"Failed to fetch evaluation data: {str(e)}"
+                }
+                evaluation_candidates.append(basic_candidate)
+        
+        result = {
+            "job_id": job_id,
+            "stage_filter": stage_filter,
+            "data_mode": "evaluation_focus",
+            "total_candidates": len(evaluation_candidates),
+            "candidates": evaluation_candidates,
+            "note": "Evaluation-focused data - CV text, screening answers, skills/experience (optimized for LLM candidate analysis)"
+        }
+        
+        logger.info(f"Returning {len(evaluation_candidates)} candidates for evaluation (job {job_id})")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting candidates for evaluation: {e}")
+        raise Exception(f"Failed to get candidates for evaluation: {str(e)}")
+
+@mcp.tool()
+async def get_candidates_from_pipeline(job_id: str, stage_filter: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get high-level candidate list from a job pipeline.
+    Returns basic candidate information for quick overviews, filtering, and counting.
+    
+    Args:
+        job_id: The job/pipeline ID (required)
+        stage_filter: Optional stage name filter
+    
+    Returns:
+        Basic candidate info including: id, name, status, dates, source, 
+        screening completion percentage, and placement details.
+    """
+    client = get_client()
+    
+    try:
+        # Use server-side filtering by job ID
         logger.info(f"Fetching candidates for job ID: {job_id}")
         candidates_data = await client.get("/candidates", params={"offer_id": job_id, "limit": 1000})
         
         all_candidates = candidates_data.get("candidates", [])
         logger.info(f"Retrieved {len(all_candidates)} candidates for job {job_id}")
         
-        # Apply stage filter if specified (client-side)
         pipeline_candidates = []
         for candidate in all_candidates:
             # Apply stage filter if specified
@@ -214,67 +335,75 @@ async def get_candidates_from_pipeline(job_id: str, include_full_profiles: bool 
                 if not stage_match:
                     continue
             
-            if include_full_profiles:
-                # Fetch full candidate profile (expensive operation)
-                try:
-                    candidate_id = candidate.get("id")
-                    full_profile = await get_candidate_profile(str(candidate_id))
-                    pipeline_candidates.append(full_profile)
-                except Exception as e:
-                    logger.warning(f"Failed to get full profile for candidate {candidate.get('id')}: {e}")
-                    pipeline_candidates.append(candidate)
-            else:
-                # Check screening questions/fields
-                fields = candidate.get("fields", [])
+            # For accurate screening completion, get full profile data
+            try:
+                candidate_id = candidate.get("id")
+                full_profile_data = await client.get(f"/candidates/{candidate_id}")
+                full_candidate = full_profile_data.get("candidate", {})
+                
+                # Calculate screening completion based only on open questions
+                open_questions = full_candidate.get("open_question_answers", [])
+                open_answered = 0
+                for q in open_questions:
+                    content = q.get("content", "")
+                    if content and content.strip():
+                        open_answered += 1
+                
+                completion_percentage = round((open_answered / len(open_questions)) * 100, 1) if open_questions else 100.0
+                
                 screening_summary = {
-                    "total_questions": len(fields),
-                    "answered_questions": len([f for f in fields if f.get("value") not in [None, "", []]]),
-                    "completion_percentage": 0
-                }
-                if screening_summary["total_questions"] > 0:
-                    screening_summary["completion_percentage"] = round(
-                        (screening_summary["answered_questions"] / screening_summary["total_questions"]) * 100, 1
-                    )
-                
-                # Return only high-level candidate information
-                high_level_candidate = {
-                    "id": candidate.get("id"),
-                    "name": candidate.get("name"),
-                    "status": candidate.get("status"),
-                    "created_at": candidate.get("created_at"),
-                    "updated_at": candidate.get("updated_at"),
-                    "source": candidate.get("source"),
-                    "screening_questions": screening_summary,
-                    "placements": []
+                    "total_questions": len(open_questions),
+                    "answered_questions": open_answered,
+                    "completion_percentage": completion_percentage
                 }
                 
-                # Add placement info for this specific job
-                for placement in candidate.get("placements", []):
-                    if str(placement.get("offer_id")) == str(job_id):
-                        stage_info = placement.get("stage", {})
-                        high_level_candidate["placements"].append({
-                            "offer_id": placement.get("offer_id"),
-                            "stage": {
-                                "id": stage_info.get("id") if isinstance(stage_info, dict) else None,
-                                "name": stage_info.get("name") if isinstance(stage_info, dict) else stage_info
-                            },
-                            "rating": placement.get("rating"),
-                            "created_at": placement.get("created_at")
-                        })
-                
-                pipeline_candidates.append(high_level_candidate)
+            except Exception as e:
+                logger.warning(f"Failed to get full profile for screening calculation {candidate.get('id')}: {e}")
+                screening_summary = {
+                    "total_questions": 0,
+                    "answered_questions": 0,
+                    "completion_percentage": 0,
+                    "note": "Could not fetch full profile for accurate calculation"
+                }
+            
+            # Return only high-level candidate information
+            basic_candidate = {
+                "id": candidate.get("id"),
+                "name": candidate.get("name"),
+                "status": candidate.get("status"),
+                "created_at": candidate.get("created_at"),
+                "updated_at": candidate.get("updated_at"),
+                "source": candidate.get("source"),
+                "screening_questions": screening_summary,
+                "placements": []
+            }
+            
+            # Add placement info for this specific job
+            for placement in candidate.get("placements", []):
+                if str(placement.get("offer_id")) == str(job_id):
+                    stage_info = placement.get("stage", {})
+                    basic_candidate["placements"].append({
+                        "offer_id": placement.get("offer_id"),
+                        "stage": {
+                            "id": stage_info.get("id") if isinstance(stage_info, dict) else None,
+                            "name": stage_info.get("name") if isinstance(stage_info, dict) else stage_info
+                        },
+                        "rating": placement.get("rating"),
+                        "created_at": placement.get("created_at")
+                    })
+            
+            pipeline_candidates.append(basic_candidate)
         
         result = {
             "job_id": job_id,
             "stage_filter": stage_filter,
-            "include_full_profiles": include_full_profiles,
+            "data_mode": "basic_summary",
             "total_candidates": len(pipeline_candidates),
             "candidates": pipeline_candidates,
-            "note": "Use get_candidate_profile(candidate_id) to get detailed information for specific candidates" if not include_full_profiles else None
+            "note": "Use get_candidate_profile(candidate_id) for detailed information or get_candidates_from_pipeline_for_evaluation(job_id) for LLM evaluation"
         }
         
-        logger.info(f"Returning {len(pipeline_candidates)} candidates for job {job_id} (full_profiles={include_full_profiles})")
-        
+        logger.info(f"Returning {len(pipeline_candidates)} basic candidates for job {job_id}")
         return result
         
     except Exception as e:

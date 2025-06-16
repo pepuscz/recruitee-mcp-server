@@ -1,138 +1,111 @@
 # Recruitee MCP Server
 
-A Model Context Protocol (MCP) server for the Recruitee API that enables extraction of candidate profiles from recruitment pipelines. Features three purpose-built functions optimized for different use cases: basic overviews, LLM evaluation, and detailed analysis.
+A Model Context Protocol (MCP) server for the Recruitee API that enables extraction of candidate profiles from recruitment pipelines. Features clean, purpose-built functions optimized for different use cases: basic overviews, LLM evaluation, and detailed analysis.
 
 ## Features
 
-- **Three Purpose-Built Functions**: Clean API with distinct functions for different use cases
-- **LLM Evaluation Optimized**: `get_candidates_from_pipeline_for_evaluation` provides curated data for candidate analysis
-- **Screening Questions Analysis**: Shows completion status of candidate screening questions (open questions only)
-- **PDF Text Extraction**: Automatic CV and cover letter text extraction using pdfplumber
-- **Server-side Filtering**: Efficient candidate filtering by job/pipeline
-- **Comprehensive Search**: Advanced candidate search with multiple filter criteria
-- **Notes Access**: Separate access to candidate notes and comments
+- **LLM Evaluation Optimized**: Clean, bias-free candidate data perfect for AI analysis
+- **PDF Text Extraction**: Automatic CV and cover letter extraction using pdfplumber
+- **Screening Questions**: Clean Q&A format for easy evaluation
+- **Flexible Data Access**: Three functions for different needs (overview, evaluation, detailed)
+- **Advanced Search**: Multi-criteria candidate filtering
+- **Notes & Ratings**: Separate access to evaluator feedback
 
 ## Available Tools
 
 ### Core Tools
 
-1. **`get_candidates_from_pipeline`** - Get high-level candidate list for quick overviews and filtering
-2. **`get_candidates_from_pipeline_for_evaluation`** - Get evaluation-focused data optimized for LLM analysis
-3. **`get_candidate_profile`** - Get complete detailed profile for a specific candidate
-4. **`search_candidates`** - Search and filter candidates with various criteria
-5. **`list_jobs`** - List all available jobs/pipelines
-6. **`get_job_details`** - Get detailed information about a specific job
-7. **`get_candidate_notes`** - Access notes and comments for a candidate
+1. **`get_candidates_from_pipeline_for_evaluation`** - **Recommended for LLM analysis** - Clean evaluation data
+2. **`get_candidates_from_pipeline`** - High-level candidate list for quick overviews
+3. **`get_candidate_profile`** - Complete detailed profile for specific candidates
+4. **`search_candidates`** - Advanced candidate search with filtering
+5. **`get_candidate_notes`** - Access notes, ratings, and evaluator feedback
+6. **`list_jobs`** - List all available jobs/pipelines
+7. **`get_job_details`** - Get detailed job information
 
 ### Tool Details
 
-#### `get_candidates_from_pipeline(job_id, stage_filter=None)`
-**High-level candidate overview**: Returns basic candidate information for quick filtering and counting.
-- Returns: id, name, status, dates, source, screening completion %, placement stage
-- Use case: Fast pipeline overviews, candidate counting, basic filtering
-- Performance: Fast - minimal data per candidate
+#### `get_candidates_from_pipeline_for_evaluation(job_id, stage_filter=None)` ⭐ **Recommended**
+**LLM evaluation optimized**: Clean, bias-free data perfect for candidate analysis.
 
-#### `get_candidates_from_pipeline_for_evaluation(job_id, stage_filter=None)`
-**LLM evaluation optimized**: Returns curated data perfect for candidate analysis.
-- Returns: CV full text, screening answers, skills/experience, cover letters (no contact info)
-- Use case: **Recommended for LLM candidate evaluation and analysis**
-- Performance: Medium - fetches full profiles but excludes administrative noise
+**Returns:**
+- CV full text extraction (PDF → text)
+- Clean screening questions: `[{"question": "...", "answer": "...", "question_type": "text"}]`
+- Flattened skills array: `["JavaScript", "React", "Node.js"]`
+- Structured experience: `[{"company": "...", "title": "...", "description": "..."}]`
+- Cover letter text
+- Basic facts only: `has_degree`, `total_screening_questions`, `answered_questions`
+
+**Key Features:**
+- ✅ No contact information (privacy-safe)
+- ✅ No bias-inducing metrics (counts, ratings)
+- ✅ Clean Q&A format for screening questions
+- ✅ Raw data for LLM assessment
+
+#### `get_candidates_from_pipeline(job_id, stage_filter=None)`
+**Quick overview**: Basic candidate information for filtering and counting.
+- Returns: id, name, status, dates, source, screening completion %
+- Use case: Fast pipeline overviews, candidate counting
+- Performance: ⚡ Fast
 
 #### `get_candidate_profile(candidate_id)`
-Get complete candidate details including:
-- Contact information and basic profile data
-- CV text extraction (full PDF text using pdfplumber)
-- Cover letter content (both API text and PDF extraction)
-- Custom fields and screening questions
-- Placement history and ratings
-- Source and referral information
+**Complete profile**: All candidate data including contact information.
+- Returns: Full profile with contact info, CV/cover letter PDFs, custom fields
+- Use case: Individual detailed review, contact information access
+- Performance: 🐌 Slow (comprehensive data)
 
-#### `search_candidates(job_ids, stage_names, status, has_cv, has_cover_letter, limit, offset)`
-Advanced search with client-side filtering:
-- Filter by specific job IDs
-- Filter by recruitment stages
-- Filter by candidate status
-- Filter by CV/cover letter presence
-- Pagination support
+#### `get_candidate_notes(candidate_id)`
+**Evaluator feedback**: Access to ratings, notes, and comments.
+- Returns: Notes, ratings, comments from recruiters/interviewers
+- Use case: Review evaluator feedback and scoring
 
 ## Installation
 
 ```bash
-# Clone the repository
+# Clone and install
 git clone <repository-url>
 cd recruitee-mcp-server
-
-# Install dependencies
 pip install -e .
 ```
 
 ## Configuration
 
-Set environment variables:
-
 ```bash
-export RECRUITEE_API_TOKEN="your-api-token"
+export RECRUITEE_API_TOKEN="your-api-token" 
 export RECRUITEE_COMPANY_ID="your-company-id"
 ```
 
 ## Usage
 
-### Basic Workflow (Recommended)
+### Recommended Workflow
 
-1. **Get high-level candidate overview (for counting/filtering):**
 ```python
-# Returns basic info for all candidates - fast
-candidates = get_candidates_from_pipeline("job_id")
-```
-
-2. **Get evaluation data for LLM analysis:**
-```python
-# Returns CV text, screening answers, skills (optimized for LLMs)
+# 1. Get clean evaluation data for LLM analysis
 evaluation_data = get_candidates_from_pipeline_for_evaluation("job_id")
-```
 
-3. **Get detailed profile for specific candidates:**
-```python
-# Get complete profile including contact info and all metadata
+# 2. Review evaluator feedback separately  
+notes = get_candidate_notes("candidate_id")
+
+# 3. Get full details only when needed
 profile = get_candidate_profile("candidate_id")
 ```
 
-### Advanced Usage
+### Function Comparison
 
-**Search candidates:**
-```python
-results = search_candidates(
-    job_ids=["123", "456"],
-    stage_names=["Interview", "Assessment"],
-    has_cv=True,
-    limit=20
-)
-```
-
-**Get candidate notes:**
-```python
-notes = get_candidate_notes("candidate_id")
-```
-
-### Function Quick Reference
-
-| **Function** | **Use Case** | **Performance** | **Returns** |
-|-------------|-------------|----------------|-------------|
-| `get_candidates_from_pipeline()` | Counting, basic filtering | ⚡ Fast | 8 basic fields |
-| `get_candidates_from_pipeline_for_evaluation()` | **LLM candidate analysis** | 🔄 Medium | 18 evaluation fields (no contact info) |
-| `get_candidate_profile()` | Individual detailed analysis | 🐌 Slow | 80+ complete fields |
-
-**💡 Recommendation**: Use `get_candidates_from_pipeline_for_evaluation()` for LLM-powered candidate evaluation.
+| **Function** | **Use Case** | **Fields** | **Performance** |
+|-------------|-------------|------------|----------------|
+| `get_candidates_from_pipeline_for_evaluation()` | **LLM analysis** | 20 clean fields | 🔄 Medium |
+| `get_candidates_from_pipeline()` | Quick overview | 8 basic fields | ⚡ Fast |
+| `get_candidate_profile()` | Complete details | 80+ fields | 🐌 Slow |
+| `get_candidate_notes()` | Evaluator feedback | Notes & ratings | ⚡ Fast |
 
 ## MCP Integration
-
-Add to your MCP settings:
 
 ```json
 {
   "mcpServers": {
     "recruitee": {
-      "command": "python",
+      "command": "python", 
       "args": ["-m", "recruitee_mcp.server"],
       "env": {
         "RECRUITEE_API_TOKEN": "your-token",
@@ -143,24 +116,17 @@ Add to your MCP settings:
 }
 ```
 
-## Performance Optimization
+## Performance Tips
 
-- **Fast overview**: Use `get_candidates_from_pipeline()` for quick candidate counts and basic filtering
-- **LLM evaluation**: Use `get_candidates_from_pipeline_for_evaluation()` for candidate analysis (no contact info noise)
-- **Selective profiling**: Only call `get_candidate_profile()` for candidates you need complete details on
-- **Efficient filtering**: Use `search_candidates()` for complex queries instead of fetching all candidates
+- **LLM evaluation**: Use `get_candidates_from_pipeline_for_evaluation()` (clean, optimized data)
+- **Quick filtering**: Use `get_candidates_from_pipeline()` for overview
+- **Contact details**: Only use `get_candidate_profile()` when contact info needed
+- **Evaluator feedback**: Use `get_candidate_notes()` for ratings/comments
 
 ## License
 
-MIT License 
-
-## 🔗 Links
-
-- **Repository**: [https://github.com/pepuscz/recruitee-mcp-server](https://github.com/pepuscz/recruitee-mcp-server)
-- **Issues**: [https://github.com/pepuscz/recruitee-mcp-server/issues](https://github.com/pepuscz/recruitee-mcp-server/issues)
-- **Recruitee API**: [https://docs.recruitee.com/](https://docs.recruitee.com/)
-- **Model Context Protocol**: [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
+MIT License
 
 ---
 
-> 💼 **Perfect for recruitment teams, HR professionals, and developers building recruitment automation tools.** 
+> 💼 **Perfect for AI-powered recruitment tools and LLM candidate evaluation systems.** 

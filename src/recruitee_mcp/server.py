@@ -215,77 +215,233 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
                 candidate_id = candidate.get("id")
                 full_profile = await get_candidate_profile(str(candidate_id))
                 
-                # Create curated profile with only evaluation-relevant data
+                # Extract and clean screening questions
+                screening_questions = []
+                raw_questions = full_profile.get("open_question_answers", [])
+                for q in raw_questions:
+                    question_data = {
+                        "question": q.get("question", ""),
+                        "answer": q.get("content", ""),
+                        "question_type": q.get("kind", "text")
+                    }
+                    screening_questions.append(question_data)
+                
+                # Extract skills and clean up the nested structure
+                skills = []
+                experience = []
+                education = []
+                languages = []
+                
+                fields = full_profile.get("fields", [])
+                
+                for field in fields:
+                    field_kind = field.get("kind", "")
+                    field_values = field.get("values", [])
+                    
+                    if field_kind == "skills" and field_values:
+                        # More robust skills extraction - handle multiple possible structures
+                        try:
+                            if isinstance(field_values, list):
+                                for value_group in field_values:
+                                    if isinstance(value_group, list):
+                                        # Nested array structure
+                                        for skill_item in value_group:
+                                            if isinstance(skill_item, dict) and "text" in skill_item:
+                                                skills.append(skill_item["text"])
+                                            elif isinstance(skill_item, str):
+                                                skills.append(skill_item)
+                                    elif isinstance(value_group, dict):
+                                        # Direct dict structure
+                                        if "text" in value_group:
+                                            skills.append(value_group["text"])
+                                        elif "name" in value_group:
+                                            skills.append(value_group["name"])
+                                    elif isinstance(value_group, str):
+                                        # Direct string
+                                        skills.append(value_group)
+                        except Exception as e:
+                            logger.warning(f"Error extracting skills for candidate {candidate_id}: {e}")
+                    
+                    elif field_kind == "experience" and field_values:
+                        # More robust experience extraction
+                        try:
+                            if isinstance(field_values, list):
+                                for value_group in field_values:
+                                    if isinstance(value_group, list):
+                                        # Nested array structure
+                                        for exp_item in value_group:
+                                            if isinstance(exp_item, dict):
+                                                experience.append({
+                                                    "company": exp_item.get("company", ""),
+                                                    "title": exp_item.get("title", ""),
+                                                    "description": exp_item.get("description", ""),
+                                                    "start_date": exp_item.get("start_date", ""),
+                                                    "end_date": exp_item.get("end_date", ""),
+                                                    "location": exp_item.get("location", "")
+                                                })
+                                    elif isinstance(value_group, dict):
+                                        # Direct dict structure
+                                        experience.append({
+                                            "company": value_group.get("company", ""),
+                                            "title": value_group.get("title", ""),
+                                            "description": value_group.get("description", ""),
+                                            "start_date": value_group.get("start_date", ""),
+                                            "end_date": value_group.get("end_date", ""),
+                                            "location": value_group.get("location", "")
+                                        })
+                        except Exception as e:
+                            logger.warning(f"Error extracting experience for candidate {candidate_id}: {e}")
+                    
+                    elif field_kind == "education" and field_values:
+                        # More robust education extraction
+                        try:
+                            if isinstance(field_values, list):
+                                for value_group in field_values:
+                                    if isinstance(value_group, list):
+                                        # Nested array structure
+                                        for edu_item in value_group:
+                                            if isinstance(edu_item, dict):
+                                                education.append({
+                                                    "school": edu_item.get("school", ""),
+                                                    "degree": edu_item.get("degree", ""),
+                                                    "major": edu_item.get("major", ""),
+                                                    "start_date": edu_item.get("start_date", ""),
+                                                    "end_date": edu_item.get("end_date", "")
+                                                })
+                                    elif isinstance(value_group, dict):
+                                        # Direct dict structure
+                                        education.append({
+                                            "school": value_group.get("school", ""),
+                                            "degree": value_group.get("degree", ""),
+                                            "major": value_group.get("major", ""),
+                                            "start_date": value_group.get("start_date", ""),
+                                            "end_date": value_group.get("end_date", "")
+                                        })
+                        except Exception as e:
+                            logger.warning(f"Error extracting education for candidate {candidate_id}: {e}")
+                    
+                    elif field_kind == "language_skill" and field_values:
+                        # More robust language extraction
+                        try:
+                            if isinstance(field_values, list):
+                                for value_group in field_values:
+                                    if isinstance(value_group, list):
+                                        # Nested array structure
+                                        for lang_item in value_group:
+                                            if isinstance(lang_item, dict):
+                                                languages.append({
+                                                    "language": lang_item.get("language_name", lang_item.get("language", "")),
+                                                    "level": lang_item.get("level", "")
+                                                })
+                                    elif isinstance(value_group, dict):
+                                        # Direct dict structure
+                                        languages.append({
+                                            "language": value_group.get("language_name", value_group.get("language", "")),
+                                            "level": value_group.get("level", "")
+                                        })
+                        except Exception as e:
+                            logger.warning(f"Error extracting languages for candidate {candidate_id}: {e}")
+                
+                # Extract current recruitment stage and status
+                current_stage = "Unknown"
+                stage_position = None
+                ratings = {}
+                
+                placements = full_profile.get("placements", [])
+                for placement in placements:
+                    if str(placement.get("offer_id")) == str(job_id):
+                        stage_info = placement.get("stage", {})
+                        if isinstance(stage_info, dict):
+                            current_stage = stage_info.get("name", "Unknown")
+                        else:
+                            current_stage = str(stage_info) if stage_info else "Unknown"
+                        
+                        stage_position = placement.get("position")
+                        ratings = placement.get("ratings", {})
+                        break
+                
+                # Get salary expectation from screening questions
+                salary_expectation = None
+                for q in raw_questions:
+                    if q.get("kind") == "salary" and q.get("content"):
+                        salary_data = {
+                            "amount": q.get("content", ""),
+                            "currency": q.get("open_question_options", {}).get("currency", "")
+                        }
+                        salary_expectation = salary_data
+                        break
+                
+                # Create clean, evaluation-focused profile
                 evaluation_profile = {
-                    # Basic candidate info
-                    "id": full_profile.get("id"),
+                    # BASIC INFO
+                    "candidate_id": full_profile.get("id"),
                     "name": full_profile.get("name"),
-                    "created_at": full_profile.get("created_at"),
-                    
-                    # CV data (most important for evaluation)
-                    "cv_url": full_profile.get("cv_url"),
-                    "cv_full_text": full_profile.get("cv_full_text_extraction", {}).get("full_text", ""),
-                    "cv_summary": {
-                        "page_count": full_profile.get("cv_text_summary", {}).get("page_count", 0),
-                        "word_count": full_profile.get("cv_text_summary", {}).get("word_count", 0),
-                        "has_text": full_profile.get("cv_text_summary", {}).get("has_full_text", False)
-                    },
-                    
-                    # Cover letter data
-                    "cover_letter_text": full_profile.get("cover_letter", ""),
-                    "cover_letter_pdf_text": full_profile.get("cover_letter_pdf_extraction", {}).get("full_text", ""),
-                    "cover_letter_summary": full_profile.get("cover_letter_unified_summary", {}),
-                    
-                    # Screening questions (critical for evaluation)
-                    "screening_questions": full_profile.get("open_question_answers", []),
-                    "screening_completion": {
-                        "total_questions": len(full_profile.get("open_question_answers", [])),
-                        "completion_percentage": 100.0  # All candidates have completed screening
-                    },
-                    
-                    # Skills and experience (filtered to useful data only)
-                    "skills_experience": {
-                        "skills": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "skills"],
-                        "experience": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "experience"],
-                        "education": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "education"],
-                        "languages": [field.get("values", []) for field in full_profile.get("fields", []) if field.get("kind") == "language_skill"]
-                    },
-                    
-                    # Pipeline and evaluation data
-                    "placements": full_profile.get("placements", []),
+                    "application_date": full_profile.get("created_at"),
                     "source": full_profile.get("source"),
                     "referrer": full_profile.get("referrer"),
                     
-                    # Status and metadata
-                    "status": candidate.get("status"),
-                    "updated_at": full_profile.get("updated_at"),
+                    # CURRENT STATUS
+                    "current_stage": current_stage,
+                    "stage_position": stage_position,
                     
-                    # Evaluation note
-                    "_evaluation_note": "Curated profile optimized for LLM candidate evaluation - includes CV text, screening answers, and relevant experience data while excluding contact info and administrative noise"
+                    # CV DATA (MOST IMPORTANT)
+                    "cv_text": full_profile.get("cv_full_text_extraction", {}).get("full_text", ""),
+                    "cv_available": bool(full_profile.get("cv_url")),
+                    "cv_pages": full_profile.get("cv_text_summary", {}).get("page_count", 0),
+                    "cv_word_count": full_profile.get("cv_text_summary", {}).get("word_count", 0),
+                    
+                    # COVER LETTER
+                    "cover_letter": full_profile.get("cover_letter", "") or full_profile.get("cover_letter_pdf_extraction", {}).get("full_text", ""),
+                    "cover_letter_available": bool(full_profile.get("cover_letter") or full_profile.get("cover_letter_pdf_extraction", {}).get("full_text")),
+                    
+                    # SCREENING QUESTIONS (CRITICAL FOR EVALUATION)
+                    "screening_questions": screening_questions,
+                    "total_screening_questions": len(screening_questions),
+                    "answered_questions": len([q for q in screening_questions if q["answer"] and q["answer"].strip()]),
+                    
+                    # SALARY EXPECTATION
+                    "salary_expectation": salary_expectation,
+                    
+                    # SKILLS & EXPERIENCE (CLEANED UP)
+                    "skills": skills,
+                    "experience": experience,
+                    "education": education,
+                    "languages": languages,
+                    
+                    # SUMMARY METRICS (MINIMAL TO AVOID BIAS)
+                    "has_degree": len(education) > 0
                 }
                 
                 evaluation_candidates.append(evaluation_profile)
                 
             except Exception as e:
                 logger.warning(f"Failed to get evaluation profile for candidate {candidate.get('id')}: {e}")
-                # Fallback to basic profile
-                basic_candidate = {
-                    "id": candidate.get("id"),
+                # Fallback to minimal profile
+                minimal_candidate = {
+                    "candidate_id": candidate.get("id"),
                     "name": candidate.get("name"),
-                    "status": candidate.get("status"),
-                    "created_at": candidate.get("created_at"),
+                    "application_date": candidate.get("created_at"),
                     "source": candidate.get("source"),
-                    "_error": f"Failed to fetch evaluation data: {str(e)}"
+                    "error": f"Failed to fetch full evaluation data: {str(e)}"
                 }
-                evaluation_candidates.append(basic_candidate)
+                evaluation_candidates.append(minimal_candidate)
         
         result = {
             "job_id": job_id,
             "stage_filter": stage_filter,
-            "data_mode": "evaluation_focus",
             "total_candidates": len(evaluation_candidates),
+            "data_optimized_for": "LLM_evaluation",
             "candidates": evaluation_candidates,
-            "note": "Evaluation-focused data - CV text, screening answers, skills/experience (optimized for LLM candidate analysis)"
+            "evaluation_guide": {
+                "key_fields": [
+                    "cv_text - Full CV content for skills/experience analysis", 
+                    "screening_questions - Candidate responses to specific job questions",
+                    "skills - Extracted technical and soft skills",
+                    "experience - Work history with descriptions",
+                    "cover_letter - Candidate motivation and fit assessment"
+                ],
+                "screening_questions_note": "Each question contains 'question', 'answer', and 'question_type' fields for easy evaluation"
+            }
         }
         
         logger.info(f"Returning {len(evaluation_candidates)} candidates for evaluation (job {job_id})")

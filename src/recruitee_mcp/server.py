@@ -171,7 +171,7 @@ def get_client() -> RecruiteeClient:
     return recruitee_client
 
 @mcp.tool()
-async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter: Optional[str] = None, include_full_cv: bool = True) -> Dict[str, Any]:
+async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter: Optional[str] = None, include_full_cv: bool = False) -> Dict[str, Any]:
     """
     Get candidates from a job pipeline with evaluation-relevant data for LLM analysis.
     Includes CV text transcription, cover letters, screening questions, and meaningful extracted data.
@@ -179,8 +179,8 @@ async def get_candidates_from_pipeline_for_evaluation(job_id: str, stage_filter:
     Args:
         job_id: The job/pipeline ID (required)
         stage_filter: Optional stage name filter
-        include_full_cv: Whether to include full CV text extraction (default: True). 
-                        Set to False to avoid overwhelming LLM models - basic CV metadata still included.
+        include_full_cv: Whether to include full CV text extraction (default: False). 
+                        Set to True to include full CV text - basic CV metadata always included.
                         Use get_candidate_profile(candidate_id) to get full CV text when needed.
     
     Returns:

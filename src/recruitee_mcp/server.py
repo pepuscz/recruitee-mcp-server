@@ -17,6 +17,15 @@ import json
 
 import aiohttp
 import pdfplumber
+# Enhanced PDF parsing imports
+import PyPDF2
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+from pdf2image import convert_from_path
+import cv2
+import numpy as np
+from docx import Document
 from mcp.server.fastmcp import FastMCP
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
@@ -67,15 +76,17 @@ class RecruiteeClient:
             logger.error(f"Error making API request: {e}")
             raise
 
-async def extract_pdf_text(pdf_url: str) -> Dict[str, Any]:
+async def extract_pdf_text_enhanced(pdf_url: str, use_ocr: bool = True, method: str = "auto") -> Dict[str, Any]:
     """
-    Download and extract full text content from a PDF URL
+    Enhanced PDF text extraction with multiple methods and OCR capabilities
     
     Args:
         pdf_url: Direct URL to the PDF file
+        use_ocr: Whether to use OCR for scanned documents (default: True)
+        method: Extraction method - "auto", "pdfplumber", "pymupdf", "pypdf2", "ocr"
         
     Returns:
-        Dict containing extracted text, page count, and metadata
+        Dict containing extracted text, page count, metadata, and method used
     """
     global http_session
     if not http_session:
@@ -104,36 +115,77 @@ async def extract_pdf_text(pdf_url: str) -> Dict[str, Any]:
             temp_path = temp_file.name
         
         try:
-            # Extract text using pdfplumber
-            with pdfplumber.open(temp_path) as pdf:
-                pages_text = []
-                full_text = ""
-                
-                for page_num, page in enumerate(pdf.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        pages_text.append({
-                            "page_number": page_num + 1,
-                            "text": page_text.strip()
-                        })
-                        full_text += page_text + "\n\n"
-                
-                # Get PDF metadata
-                metadata = {
-                    "page_count": len(pdf.pages),
-                    "metadata": pdf.metadata or {}
-                }
-                
-                logger.info(f"Successfully extracted {len(pages_text)} pages from PDF")
-                
+            extraction_results = []
+            methods_attempted = []
+            
+            # Method 1: PDFPlumber (best for complex layouts)
+            if method in ["auto", "pdfplumber"]:
+                try:
+                    result = await _extract_with_pdfplumber(temp_path)
+                    if result["success"]:
+                        extraction_results.append(("pdfplumber", result))
+                        methods_attempted.append("pdfplumber")
+                        if method == "pdfplumber":
+                            return result
+                except Exception as e:
+                    logger.warning(f"PDFPlumber extraction failed: {e}")
+                    methods_attempted.append("pdfplumber (failed)")
+            
+            # Method 2: PyMuPDF (fast and accurate)
+            if method in ["auto", "pymupdf"]:
+                try:
+                    result = await _extract_with_pymupdf(temp_path)
+                    if result["success"]:
+                        extraction_results.append(("pymupdf", result))
+                        methods_attempted.append("pymupdf")
+                        if method == "pymupdf":
+                            return result
+                except Exception as e:
+                    logger.warning(f"PyMuPDF extraction failed: {e}")
+                    methods_attempted.append("pymupdf (failed)")
+            
+            # Method 3: PyPDF2 (lightweight fallback)
+            if method in ["auto", "pypdf2"]:
+                try:
+                    result = await _extract_with_pypdf2(temp_path)
+                    if result["success"]:
+                        extraction_results.append(("pypdf2", result))
+                        methods_attempted.append("pypdf2")
+                        if method == "pypdf2":
+                            return result
+                except Exception as e:
+                    logger.warning(f"PyPDF2 extraction failed: {e}")
+                    methods_attempted.append("pypdf2 (failed)")
+            
+            # Method 4: OCR (for scanned documents)
+            if use_ocr and method in ["auto", "ocr"]:
+                try:
+                    result = await _extract_with_ocr(temp_path)
+                    if result["success"]:
+                        extraction_results.append(("ocr", result))
+                        methods_attempted.append("ocr")
+                        if method == "ocr":
+                            return result
+                except Exception as e:
+                    logger.warning(f"OCR extraction failed: {e}")
+                    methods_attempted.append("ocr (failed)")
+            
+            # Choose best result based on content quality
+            if extraction_results:
+                best_method, best_result = _choose_best_extraction(extraction_results)
+                best_result["method_used"] = best_method
+                best_result["methods_attempted"] = methods_attempted
+                logger.info(f"Successfully extracted PDF using {best_method} method")
+                return best_result
+            else:
+                logger.error("All PDF extraction methods failed")
                 return {
-                    "success": True,
-                    "full_text": full_text.strip(),
-                    "pages": pages_text,
-                    "page_count": len(pdf.pages),
-                    "metadata": metadata,
-                    "character_count": len(full_text.strip()),
-                    "word_count": len(full_text.split()) if full_text else 0
+                    "success": False,
+                    "error": "All extraction methods failed",
+                    "full_text": "",
+                    "pages": [],
+                    "page_count": 0,
+                    "methods_attempted": methods_attempted
                 }
         
         finally:
@@ -152,6 +204,193 @@ async def extract_pdf_text(pdf_url: str) -> Dict[str, Any]:
             "pages": [],
             "page_count": 0
         }
+
+async def _extract_with_pdfplumber(pdf_path: str) -> Dict[str, Any]:
+    """Extract text using pdfplumber"""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            pages_text = []
+            full_text = ""
+            
+            for page_num, page in enumerate(pdf.pages):
+                page_text = page.extract_text()
+                if page_text:
+                    pages_text.append({
+                        "page_number": page_num + 1,
+                        "text": page_text.strip()
+                    })
+                    full_text += page_text + "\n\n"
+            
+            # Get PDF metadata
+            metadata = {
+                "page_count": len(pdf.pages),
+                "metadata": pdf.metadata or {}
+            }
+            
+            return {
+                "success": True,
+                "full_text": full_text.strip(),
+                "pages": pages_text,
+                "page_count": len(pdf.pages),
+                "metadata": metadata,
+                "character_count": len(full_text.strip()),
+                "word_count": len(full_text.split()) if full_text else 0
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _extract_with_pymupdf(pdf_path: str) -> Dict[str, Any]:
+    """Extract text using PyMuPDF"""
+    try:
+        doc = fitz.open(pdf_path)
+        pages_text = []
+        full_text = ""
+        
+        for page_num in range(doc.page_count):
+            page = doc[page_num]
+            page_text = page.get_text()
+            if page_text.strip():
+                pages_text.append({
+                    "page_number": page_num + 1,
+                    "text": page_text.strip()
+                })
+                full_text += page_text + "\n\n"
+        
+        metadata = {
+            "page_count": doc.page_count,
+            "metadata": doc.metadata
+        }
+        
+        doc.close()
+        
+        return {
+            "success": True,
+            "full_text": full_text.strip(),
+            "pages": pages_text,
+            "page_count": doc.page_count,
+            "metadata": metadata,
+            "character_count": len(full_text.strip()),
+            "word_count": len(full_text.split()) if full_text else 0
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _extract_with_pypdf2(pdf_path: str) -> Dict[str, Any]:
+    """Extract text using PyPDF2"""
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            pages_text = []
+            full_text = ""
+            
+            for page_num, page in enumerate(pdf_reader.pages):
+                page_text = page.extract_text()
+                if page_text.strip():
+                    pages_text.append({
+                        "page_number": page_num + 1,
+                        "text": page_text.strip()
+                    })
+                    full_text += page_text + "\n\n"
+            
+            metadata = {
+                "page_count": len(pdf_reader.pages),
+                "metadata": pdf_reader.metadata or {}
+            }
+            
+            return {
+                "success": True,
+                "full_text": full_text.strip(),
+                "pages": pages_text,
+                "page_count": len(pdf_reader.pages),
+                "metadata": metadata,
+                "character_count": len(full_text.strip()),
+                "word_count": len(full_text.split()) if full_text else 0
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def _extract_with_ocr(pdf_path: str) -> Dict[str, Any]:
+    """Extract text using OCR (for scanned documents)"""
+    try:
+        # Convert PDF to images
+        images = convert_from_path(pdf_path, dpi=200)
+        pages_text = []
+        full_text = ""
+        
+        for page_num, image in enumerate(images):
+            # Convert PIL image to OpenCV format for preprocessing
+            img_array = np.array(image)
+            img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            
+            # Preprocess image for better OCR
+            img_processed = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            
+            # Apply OCR
+            page_text = pytesseract.image_to_string(img_processed, lang='eng')
+            
+            if page_text.strip():
+                pages_text.append({
+                    "page_number": page_num + 1,
+                    "text": page_text.strip()
+                })
+                full_text += page_text + "\n\n"
+        
+        metadata = {
+            "page_count": len(images),
+            "metadata": {"ocr_processed": True}
+        }
+        
+        return {
+            "success": True,
+            "full_text": full_text.strip(),
+            "pages": pages_text,
+            "page_count": len(images),
+            "metadata": metadata,
+            "character_count": len(full_text.strip()),
+            "word_count": len(full_text.split()) if full_text else 0
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def _choose_best_extraction(extraction_results: List) -> tuple:
+    """Choose the best extraction result based on content quality"""
+    if not extraction_results:
+        return None, None
+    
+    # Score each result based on:
+    # 1. Character count (more is usually better)
+    # 2. Word count
+    # 3. Method reliability order
+    method_preference = {"pdfplumber": 3, "pymupdf": 2, "pypdf2": 1, "ocr": 0}
+    
+    best_score = -1
+    best_result = None
+    
+    for method, result in extraction_results:
+        if not result.get("success"):
+            continue
+            
+        # Calculate score
+        char_count = result.get("character_count", 0)
+        word_count = result.get("word_count", 0)
+        method_score = method_preference.get(method, 0)
+        
+        # Weighted score: content quality + method preference
+        score = (char_count * 0.4) + (word_count * 0.4) + (method_score * 1000)
+        
+        if score > best_score:
+            best_score = score
+            best_result = (method, result)
+    
+    return best_result if best_result else extraction_results[0]
+
+# Keep the original function for backward compatibility
+async def extract_pdf_text(pdf_url: str) -> Dict[str, Any]:
+    """
+    Original PDF text extraction function (backward compatibility)
+    Now uses the enhanced extraction method with automatic method selection
+    """
+    return await extract_pdf_text_enhanced(pdf_url, use_ocr=True, method="auto")
 
 # Initialize client
 recruitee_client: Optional[RecruiteeClient] = None
@@ -854,6 +1093,55 @@ async def get_candidate_notes(candidate_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting candidate notes: {e}")
         raise Exception(f"Failed to get candidate notes: {str(e)}")
+
+@mcp.tool()
+async def extract_pdf_with_options(pdf_url: str, use_ocr: bool = True, method: str = "auto") -> Dict[str, Any]:
+    """
+    Extract text from PDF with configurable options and multiple parsing methods.
+    
+    Args:
+        pdf_url: Direct URL to the PDF file
+        use_ocr: Whether to use OCR for scanned documents (default: True)
+        method: Extraction method - "auto" (tries all methods and picks best), 
+                "pdfplumber" (best for complex layouts), 
+                "pymupdf" (fast and accurate), 
+                "pypdf2" (lightweight), 
+                "ocr" (OCR only)
+    
+    Returns:
+        Dict containing extracted text, metadata, and information about the method used
+    """
+    try:
+        result = await extract_pdf_text_enhanced(pdf_url, use_ocr=use_ocr, method=method)
+        
+        # Add helpful information about the extraction
+        if result.get("success"):
+            extraction_info = {
+                "pdf_url": pdf_url,
+                "extraction_method": method,
+                "ocr_enabled": use_ocr,
+                "method_used": result.get("method_used", "unknown"),
+                "methods_attempted": result.get("methods_attempted", []),
+                "quality_metrics": {
+                    "character_count": result.get("character_count", 0),
+                    "word_count": result.get("word_count", 0),
+                    "page_count": result.get("page_count", 0),
+                    "has_meaningful_content": result.get("character_count", 0) > 100
+                }
+            }
+            result["extraction_info"] = extraction_info
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in extract_pdf_with_options: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "full_text": "",
+            "pages": [],
+            "page_count": 0
+        }
 
 async def cleanup():
     """Cleanup resources"""
